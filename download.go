@@ -17,8 +17,12 @@ import (
 	"time"
 )
 
+const (
+	TmpExt = ".dld"
+)
+
 type WriteCounter struct {
-	Total uint64
+	Total   uint64
 	updater pb.ProgressFunc
 }
 
@@ -29,13 +33,18 @@ func (wc *WriteCounter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+type FileShortInfo struct {
+	Path string
+	Name string
+	Size int64
+}
+
 const POOL = 3
 
 func main() {
 	var params = cli.Params{}
 	params.Load()
 	params.Print()
-	//	params.ConfigFile = "/Users/afedorenchik/go/bin/download.json"
 	Run(params)
 }
 
@@ -49,7 +58,6 @@ func Run(params cli.Params) {
 	download(files, params)
 	time.Sleep(time.Second)
 }
-
 
 func loadConfig(params cli.Params) (configuration conf.Configuration) {
 	jsonFile, err := os.Open(params.ConfigFile)
@@ -135,7 +143,6 @@ func resolveFiles(paths []string) (res []string) {
 	}()
 	wg.Wait()
 	bar(len(paths))
-	//defer fmt.Printf("%v files found\n", len(res))
 	return
 }
 
@@ -148,7 +155,7 @@ func getFiles(s string, c chan []string, wg *sync.WaitGroup) {
 	c <- dat
 }
 
-func collectFiles(files []string) (res []*os.File) {
+func collectFiles(files []string) (res []FileShortInfo) {
 	time.Sleep(time.Second)
 	fmt.Println()
 	progressBars, _ := pb.New()
@@ -160,8 +167,8 @@ func collectFiles(files []string) (res []*os.File) {
 	go progressBars.Listen()
 	bar(0)
 
-	res = make([]*os.File, 0)
-	c := make(chan *os.File)
+	res = make([]FileShortInfo, 0)
+	c := make(chan FileShortInfo)
 	wg := new(sync.WaitGroup)
 	for _, f := range files {
 		wg.Add(1)
@@ -177,20 +184,20 @@ func collectFiles(files []string) (res []*os.File) {
 	}()
 	wg.Wait()
 	bar(len(files))
-	//defer fmt.Printf("%v files are scheduled for download\n", len(res))
 	return
 }
 
-func getStats(s string, infos chan *os.File, group *sync.WaitGroup) {
+func getStats(s string, infos chan FileShortInfo, group *sync.WaitGroup) {
 	defer group.Done()
-	info, err := os.Open(s)
-	if err != nil {
-		log.Fatalf("Failed to collect file %v info due to %v", s, err)
+	info, _ := os.Stat(s)
+	infos <- FileShortInfo{
+		Path: s,
+		Name: info.Name(),
+		Size: info.Size(),
 	}
-	infos <- info
 }
 
-func download(files []*os.File, params cli.Params) {
+func download(files []FileShortInfo, params cli.Params) {
 	time.Sleep(time.Second)
 	fmt.Println()
 	progressBars, _ := pb.New()
@@ -198,7 +205,7 @@ func download(files []*os.File, params cli.Params) {
 	if err != nil {
 		log.Fatalf("Failed to show porgress due to %v", err)
 	}
-	jobs := make(chan *os.File)
+	jobs := make(chan FileShortInfo)
 	res := make(chan int)
 	wg := new(sync.WaitGroup)
 
@@ -207,14 +214,13 @@ func download(files []*os.File, params cli.Params) {
 		go worker(jobs, res, updater, progressBars.Bars[w], params)
 	}
 	bar := progressBars.MakeBar(len(files), "Total: ")
-	//bar(0)
 	go progressBars.Listen()
 	bar(0)
 
 	go func() {
 		for i := 0; i < len(files); i++ {
 			<-res
-			bar(i+1)
+			bar(i + 1)
 			wg.Done()
 		}
 	}()
@@ -228,16 +234,15 @@ func download(files []*os.File, params cli.Params) {
 	wg.Wait()
 }
 
-func worker(jobs <-chan *os.File, res chan<- int, updateFunc pb.ProgressFunc, bar *pb.ProgressBar, params cli.Params) {
+func worker(jobs <-chan FileShortInfo, res chan<- int, updateFunc pb.ProgressFunc, bar *pb.ProgressBar, params cli.Params) {
 	for j := range jobs {
-		fi, _ := j.Stat()
 		bar.StartTime = time.Now()
-		bar.Total = int(fi.Size())
-		delta := len(bar.Prepend) - len(fi.Name())
-		bar.Prepend = fi.Name()
+		bar.Total = int(j.Size)
+		delta := len(bar.Prepend) - len(j.Name)
+		bar.Prepend = j.Name
 		bar.Width = bar.Width + delta
 		updateFunc(0)
-		processFile(j, fi, updateFunc, params)
+		processFile(j, updateFunc, params)
 		res <- 0
 	}
 	bar.StartTime = time.Now()
@@ -248,8 +253,30 @@ func worker(jobs <-chan *os.File, res chan<- int, updateFunc pb.ProgressFunc, ba
 	updateFunc(1)
 }
 
-func processFile(file *os.File, info os.FileInfo, bar pb.ProgressFunc, params cli.Params) {
-	dst := filepath.Join(params.WorkingDir, info.Name() + ".tmp")
+func processFile(info FileShortInfo, bar pb.ProgressFunc, params cli.Params) {
+	dst := filepath.Join(params.WorkingDir, info.Name+TmpExt)
+
+	hasToRename, err := copyFile(info, bar, params)
+	if err != nil {
+		log.Fatalf("Failed to flush file %v due to %v", dst, err)
+	}
+
+	if hasToRename {
+		final := filepath.Join(params.WorkingDir, info.Name+"")
+		err := os.Rename(dst, final)
+		if err != nil {
+			log.Printf("ERROR:  Failed to rename file %v due to %v", dst, err)
+		}
+
+	}
+}
+
+func copyFile(info FileShortInfo, bar pb.ProgressFunc, params cli.Params) (bool, error) {
+	dst := filepath.Join(params.WorkingDir, info.Name+TmpExt)
+	file, err := os.Open(info.Path)
+	if err != nil {
+		log.Printf("Failed to open file %v due to %v", info.Path, err)
+	}
 	defer func() {
 		if err := file.Close(); err != nil {
 			log.Printf("Failed to close file %v due to %v", dst, err)
@@ -270,8 +297,8 @@ func processFile(file *os.File, info os.FileInfo, bar pb.ProgressFunc, params cl
 
 	if !done {
 		counter := &WriteCounter{
-			Total:0,
-			updater:bar,
+			Total:   0,
+			updater: bar,
 		}
 
 		_, err = io.Copy(destination, io.TeeReader(file, counter))
@@ -279,56 +306,31 @@ func processFile(file *os.File, info os.FileInfo, bar pb.ProgressFunc, params cl
 			log.Fatalf("Failed to copy file %v due to %v", dst, err)
 		}
 
-		err = destination.Sync()
-		if err != nil {
-			log.Fatalf("Failed to flush file %v due to %v", dst, err)
-		}
-
-		final := filepath.Join(params.WorkingDir, info.Name() + "")
-		err := os.Rename(dst, final)
-		if err != nil {
-			log.Printf("ERROR:  Failed to rename file %v due to %v", final, err)
-		}
-
+		return true, destination.Sync()
 	} else {
-		bar(int(info.Size()))
+		bar(int(info.Size))
+		return false, nil
 	}
 }
 
-func checkDone(info os.FileInfo, params cli.Params) bool {
-	tmp := filepath.Join(params.WorkingDir, info.Name() + ".tmp")
+func checkDone(info FileShortInfo, params cli.Params) bool {
+	tmp := filepath.Join(params.WorkingDir, info.Name+TmpExt)
 	_, err := os.Stat(tmp)
 	if !os.IsNotExist(err) {
 		if err = os.Remove(tmp); err != nil {
 			log.Fatalf("Failed to delete partialy downloaded file %v due to %v", tmp, err)
 		}
 	}
-
-	dst := filepath.Join(params.WorkingDir, info.Name())
+	dst := filepath.Join(params.WorkingDir, info.Name)
 	stat, err := os.Stat(dst)
 	if os.IsNotExist(err) {
 		return false
 	}
-	if stat.Size() != info.Size() {
+	if stat.Size() != info.Size {
 		if err = os.Remove(dst); err != nil {
 			log.Fatalf("Failed to delete partialy downloaded file %v due to %v", dst, err)
 		}
 		return false
 	}
-
 	return true
 }
-
-//func fake(val interface{}) {}
-//
-//func debug(val interface{}) {
-//	log.Print(val)
-//}
-//
-//func debuglist(vals []*os.File) {
-//	for i, val := range vals {
-//		v, _ := val.Stat()
-//		log.Printf("%3v. %v", i+1, v)
-//	}
-//}
-
