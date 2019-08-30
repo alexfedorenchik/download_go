@@ -5,18 +5,21 @@ import (
 	"log"
 )
 
-type Choice string
+type Choice struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
 
 func (it Choice) GetName() string {
-	return string(it)
+	return it.Label
 }
 
 type Param struct {
-	Name       string   `json:"name"`
-	Description string `json:"description"`
-	Values     []Choice `json:"choice"`
-	resolved   []string
-	isResolved bool
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Values      []Choice `json:"choice"`
+	resolved    []string
+	isResolved  bool
 }
 
 func (it Param) GetDescription() string {
@@ -42,8 +45,8 @@ func (it Source) GetName() string {
 }
 
 type Configuration struct {
-	Description string `json:"description"`
-	Sources []Source `json:"sources"`
+	Description string   `json:"description"`
+	Sources     []Source `json:"sources"`
 }
 
 func (it Configuration) GetDescription() string {

@@ -94,7 +94,7 @@ func resolveParams(source *conf.Source) {
 		nums := ui.ProcessUserInput(param, true)
 		vals := make([]string, len(nums))
 		for i, j := range nums {
-			vals[i] = string(param.Values[j-1])
+			vals[i] = param.Values[j-1].Value
 		}
 		param.Resolve(vals)
 		source.Parameters[i] = param
