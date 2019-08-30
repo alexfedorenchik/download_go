@@ -265,52 +265,50 @@ func processFile(info FileShortInfo, bar pb.ProgressFunc, params cli.Params) {
 		final := filepath.Join(params.WorkingDir, info.Name+"")
 		err := os.Rename(dst, final)
 		if err != nil {
-			log.Printf("ERROR:  Failed to rename file %v due to %v", dst, err)
+			log.Fatalf("ERROR:  Failed to rename file %v due to %v", dst, err)
 		}
 
 	}
 }
 
 func copyFile(info FileShortInfo, bar pb.ProgressFunc, params cli.Params) (bool, error) {
-	dst := filepath.Join(params.WorkingDir, info.Name+TmpExt)
+	if checkDone(info, params) {
+		bar(int(info.Size))
+		return false, nil
+	}
+
 	file, err := os.Open(info.Path)
 	if err != nil {
-		log.Printf("Failed to open file %v due to %v", info.Path, err)
+		log.Fatalf("Failed to open file %v due to %v", info.Path, err)
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			log.Printf("Failed to close file %v due to %v", dst, err)
+			log.Fatalf("Failed to close file %v due to %v", info.Path, err)
 		}
 	}()
 
+	dst := filepath.Join(params.WorkingDir, info.Name+TmpExt)
 	destination, err := os.Create(dst)
 	if err != nil {
 		log.Fatalf("Failed to create file %v due to %v", dst, err)
 	}
 	defer func() {
 		if err := destination.Close(); err != nil {
-			log.Printf("Failed to close file %v due to %v", dst, err)
+			log.Fatalf("Failed to close file %v due to %v", dst, err)
 		}
 	}()
 
-	done := checkDone(info, params)
-
-	if !done {
-		counter := &WriteCounter{
-			Total:   0,
-			updater: bar,
-		}
-
-		_, err = io.Copy(destination, io.TeeReader(file, counter))
-		if err != nil {
-			log.Fatalf("Failed to copy file %v due to %v", dst, err)
-		}
-
-		return true, destination.Sync()
-	} else {
-		bar(int(info.Size))
-		return false, nil
+	counter := &WriteCounter{
+		Total:   0,
+		updater: bar,
 	}
+
+	_, err = io.Copy(destination, io.TeeReader(file, counter))
+	if err != nil {
+		log.Fatalf("Failed to copy file %v due to %v", dst, err)
+	}
+
+	return true, destination.Sync()
 }
 
 func checkDone(info FileShortInfo, params cli.Params) bool {
