@@ -6,7 +6,7 @@ import (
 	"download/ui"
 	"encoding/json"
 	"fmt"
-	pb "github.com/sethgrid/multibar"
+	pb "github.com/alexfedorenchik/multibar"
 	"io"
 	"io/ioutil"
 	"log"
@@ -119,7 +119,7 @@ func resolvePaths(source conf.Source) []string {
 func resolveFiles(paths []string) (res []string) {
 	progressBars, _ := pb.New()
 	fmt.Println()
-	_, err := progressBars.Printf("Looking for files in %v folders.\n", len(paths))
+	_, err := progressBars.Printf("Looking for files. Introspecting %v pattern(s).\n", len(paths))
 	if err != nil {
 		log.Fatalf("Failed to show porgress due to %v", err)
 	}
